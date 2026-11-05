@@ -1,0 +1,94 @@
+{% extends 'tracker/base.html' %}
+{% load static %}
+{% block title %}Settings · StudyTrack{% endblock %}
+{% block extra_head %}<link href="{% static 'tracker/settings.css' %}" rel="stylesheet">{% endblock %}
+{% block content %}
+<div class="page-heading">
+  <p class="eyebrow">Personalize</p>
+  <h1>Subject settings</h1>
+  <p>Rename your subjects and choose colors that make reports easy to read.</p>
+</div>
+<section class="app-card settings-card">
+  <form method="post">
+    {% csrf_token %}
+    {% for subject in subjects %}
+    <div class="setting-row">
+      <div class="subject-input">
+        <span class="subject-dot" style="background:{{ subject.color }}"></span>
+        <input name="name_{{ subject.id }}" value="{{ subject.name }}" maxlength="120" aria-label="Subject name">
+      </div>
+      <div class="subject-options">
+        <label class="subject-color-option">
+          <span>Color</span>
+          <input class="color-input" type="color" name="color_{{ subject.id }}" value="{{ subject.color }}" aria-label="{{ subject.name }} color">
+        </label>
+        <label class="subject-active-option">
+          <span>Active</span>
+          <span class="form-check form-switch">
+            <input class="form-check-input" type="checkbox" role="switch" name="active_{{ subject.id }}" {% if subject.active %}checked{% endif %} aria-label="{{ subject.name }} active">
+          </span>
+        </label>
+        <button type="button" class="btn btn-outline-danger btn-sm subject-delete-option" data-bs-toggle="modal" data-bs-target="#deleteSubjectModal" data-subject-name="{{ subject.name }}" data-delete-url="{% url 'delete_subject' subject.pk %}" aria-label="Delete {{ subject.name }}" title="Delete {{ subject.name }}"><i class="bi bi-trash"></i></button>
+      </div>
+    </div>
+    {% endfor %}
+    <div class="form-actions">
+      <span class="form-hint">Inactive subjects stay in historical reports but cannot be selected for new timers.</span>
+      <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Save settings</button>
+    </div>
+  </form>
+</section>
+<div class="modal fade" id="deleteSubjectModal" tabindex="-1" aria-labelledby="deleteSubjectModalLabel" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-centered">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h2 class="modal-title fs-5" id="deleteSubjectModalLabel">Delete subject?</h2>
+        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cancel"></button>
+      </div>
+      <div class="modal-body">
+        Are you sure you want to delete <strong id="deleteSubjectName"></strong>? This action cannot be undone. Subjects with saved sessions cannot be deleted.
+      </div>
+      <div class="modal-footer">
+        <button type="button" class="btn btn-light" data-bs-dismiss="modal">Cancel</button>
+        <form method="post" id="deleteSubjectForm">
+          {% csrf_token %}
+          <button type="submit" class="btn btn-danger"><i class="bi bi-trash"></i> Delete</button>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+<section class="app-card form-card mt-4">
+  <div class="card-heading">
+    <div><h2>Add a subject</h2><p>Add as many subjects as you need for timers and reports.</p></div>
+  </div>
+  <form method="post">
+    {% csrf_token %}
+    <div class="row g-3 align-items-end">
+      <div class="col-md-7">
+        <label for="{{ subject_form.name.id_for_label }}">Subject name</label>
+        {{ subject_form.name }}
+        {% for error in subject_form.name.errors %}<div class="form-error">{{ error }}</div>{% endfor %}
+      </div>
+      <div class="col-md-3">
+        <label for="{{ subject_form.color.id_for_label }}">Color</label>
+        {{ subject_form.color }}
+        {% for error in subject_form.color.errors %}<div class="form-error">{{ error }}</div>{% endfor %}
+      </div>
+      <div class="col-md-2">
+        <button type="submit" name="add_subject" value="1" class="btn btn-primary w-100"><i class="bi bi-plus-lg"></i> Add subject</button>
+      </div>
+    </div>
+  </form>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  document.getElementById("deleteSubjectModal").addEventListener("show.bs.modal", function (event) {
+    const trigger = event.relatedTarget;
+    if (!(trigger instanceof HTMLElement)) return;
+    document.getElementById("deleteSubjectName").textContent = trigger.dataset.subjectName;
+    document.getElementById("deleteSubjectForm").action = trigger.dataset.deleteUrl;
+  });
+</script>
+{% endblock %}

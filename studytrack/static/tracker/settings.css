@@ -1,0 +1,69 @@
+.settings-card .settings-head {
+  display: none;
+}
+
+.settings-card .setting-row {
+  display: block;
+  padding: 1rem 0.1rem;
+}
+
+.settings-card .subject-input {
+  width: 100%;
+}
+
+.settings-card .subject-input input {
+  min-width: 0;
+  flex: 1;
+}
+
+.subject-options {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  flex-wrap: wrap;
+  padding: 0.75rem 0 0 1.65rem;
+}
+
+.subject-color-option,
+.subject-active-option {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.subject-active-option .form-switch {
+  display: inline-flex;
+  align-items: center;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+}
+
+.subject-active-option .form-check-input {
+  float: none;
+  margin: 0;
+}
+
+.subject-delete-option {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  padding: 0;
+  margin-left: auto;
+}
+
+@media (max-width: 575px) {
+  .subject-options {
+    gap: 0.85rem;
+    padding-left: 0;
+  }
+
+  .subject-delete-option {
+    margin-left: 0;
+  }
+}

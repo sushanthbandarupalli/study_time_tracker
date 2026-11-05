@@ -1,0 +1,5 @@
+<div class="row g-3 metric-grid mb-4">
+{% for label, value, icon, tone in metrics.cards %}
+  <div class="col-6 col-md-4 col-xl-2"><div class="metric-card {{ tone }}"><div class="metric-icon"><i class="bi {{ icon }}"></i></div><p>{{ label }}</p><strong>{{ value }}</strong><span>{% if label == 'Sessions' %}in this period{% else %}tracked time{% endif %}</span></div></div>
+{% endfor %}
+</div>
