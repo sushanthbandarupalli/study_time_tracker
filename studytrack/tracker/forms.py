@@ -4,6 +4,10 @@ from .models import Subject, TimeEntry
 
 
 class SubjectForm(forms.ModelForm):
+    def __init__(self, *args, user, **kwargs):
+        self.user = user
+        super().__init__(*args, **kwargs)
+
     class Meta:
         model = Subject
         fields = ["name", "color"]
@@ -14,14 +18,25 @@ class SubjectForm(forms.ModelForm):
 
     def clean_name(self):
         name = self.cleaned_data["name"]
-        if Subject.objects.filter(name__iexact=name).exists():
+        if Subject.objects.filter(user=self.user, name__iexact=name).exists():
             raise forms.ValidationError("A subject with this name already exists.")
         return name
 
+    def save(self, commit=True):
+        subject = super().save(commit=False)
+        subject.user = self.user
+        if commit:
+            subject.save()
+        return subject
+
 
 class TimerStartForm(forms.Form):
-    subject = forms.ModelChoiceField(queryset=Subject.objects.filter(active=True), required=False, empty_label="No subject")
+    subject = forms.ModelChoiceField(queryset=Subject.objects.none(), required=False, empty_label="No subject")
     activity = forms.ChoiceField(choices=TimeEntry.Activity.choices)
+
+    def __init__(self, *args, user, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["subject"].queryset = Subject.objects.filter(user=user, active=True)
 
     def clean(self):
         cleaned = super().clean()
@@ -39,9 +54,9 @@ class TimeEntryForm(forms.ModelForm):
         fields = ["subject", "activity", "start_datetime", "end_datetime", "notes"]
         widgets = {"notes": forms.Textarea(attrs={"rows": 3, "placeholder": "Optional note about this session"})}
 
-    def __init__(self, *args, **kwargs):
+    def __init__(self, *args, user, **kwargs):
         super().__init__(*args, **kwargs)
-        self.fields["subject"].queryset = Subject.objects.all()
+        self.fields["subject"].queryset = Subject.objects.filter(user=user)
         if self.instance and self.instance.pk:
             for field in ("start_datetime", "end_datetime"):
                 value = getattr(self.instance, field)

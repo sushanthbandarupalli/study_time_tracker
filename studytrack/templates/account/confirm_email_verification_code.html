@@ -1,0 +1,59 @@
+{% extends 'account/base.html' %}
+{% block title %}Verify your email · StudyTrack{% endblock %}
+{% block account_content %}
+<div class="page-heading">
+  <p class="eyebrow">One last step</p>
+  <h1>Verify your email</h1>
+  <p>Enter the six-digit code we sent to <strong>{{ email }}</strong>. The code expires shortly.</p>
+</div>
+{% if verify_form.non_field_errors %}<div class="alert alert-danger" role="alert">{{ verify_form.non_field_errors }}</div>{% endif %}
+<form method="post" action="{% url 'account_email_verification_sent' %}">
+  {% csrf_token %}
+  {% for field in verify_form %}
+    {% if field.is_hidden %}{{ field }}{% else %}
+    <div class="mb-3">
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% for error in field.errors %}<div class="form-error">{{ error }}</div>{% endfor %}
+    </div>
+    {% endif %}
+  {% endfor %}
+  {{ redirect_field }}
+  <button type="submit" class="btn btn-primary w-100">Confirm email</button>
+</form>
+<div class="auth-code-actions">
+  {% if can_resend %}
+  <form method="post" action="{% url 'account_email_verification_sent' %}">
+    {% csrf_token %}
+    <input type="hidden" name="action" value="resend">
+    {{ redirect_field }}
+    <button type="submit" class="btn btn-light w-100">Send a new code</button>
+  </form>
+  {% endif %}
+  {% if cancel_url %}
+  <a class="auth-cancel-link" href="{{ cancel_url }}">Cancel</a>
+  {% else %}
+  <form method="post" action="{% url 'account_logout' %}">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{% url 'account_login' %}">
+    <button type="submit" class="auth-cancel-link">Cancel</button>
+  </form>
+  {% endif %}
+</div>
+{% if can_change %}
+<details class="auth-change-email" {% if change_form.errors %}open{% endif %}>
+  <summary>Use a different email address</summary>
+  <form method="post" action="{% url 'account_email_verification_sent' %}" class="mt-3">
+    {% csrf_token %}
+    {% for field in change_form %}
+    <div class="mb-3">
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% for error in field.errors %}<div class="form-error">{{ error }}</div>{% endfor %}
+    </div>
+    {% endfor %}
+    <button type="submit" name="action" value="change" class="btn btn-light">Change email</button>
+  </form>
+</details>
+{% endif %}
+{% endblock %}

@@ -1,0 +1,50 @@
+{% extends 'account/base.html' %}
+{% load i18n allauth account socialaccount %}
+{% block title %}{% if form.account_already_registered %}Account found · StudyTrack{% else %}Create account · StudyTrack{% endif %}{% endblock %}
+{% block account_content %}
+{% if form.account_already_registered %}
+<div class="page-heading">
+  <p class="eyebrow">Welcome back</p>
+  <h1>Account already registered</h1>
+  <p>This email is already registered. Sign in to continue to StudyTrack.</p>
+</div>
+{% else %}
+<div class="page-heading">
+  <p class="eyebrow">Your personal study space</p>
+  <h1>Create account</h1>
+  <p>Verify your email address to keep your study data private.</p>
+</div>
+{% endif %}
+{% if form.account_already_registered %}
+<div class="auth-existing-account">
+  <span class="empty-icon"><i class="bi bi-person-check"></i></span>
+  <a class="btn btn-primary w-100" href="{% url 'account_login' %}">Try signing in</a>
+  <a class="auth-secondary-link" href="{% url 'account_reset_password' %}">Forgot your password?</a>
+</div>
+{% else %}
+{% if form.non_field_errors %}<div class="alert alert-danger" role="alert">{{ form.non_field_errors }}</div>{% endif %}
+<form method="post" action="{% url 'account_signup' %}">
+  {% csrf_token %}
+  {% for field in form %}
+    {% if field.is_hidden %}{{ field }}{% else %}
+    <div class="mb-3">
+      <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+      {{ field }}
+      {% if field.help_text %}<div class="form-hint">{{ field.help_text }}</div>{% endif %}
+      {% for error in field.errors %}<div class="form-error">{{ error }}</div>{% endfor %}
+    </div>
+    {% endif %}
+  {% endfor %}
+  {{ redirect_field }}
+  <button type="submit" class="btn btn-primary w-100">Create account</button>
+</form>
+{% if google_oauth_enabled %}
+<div class="auth-divider"><span>or</span></div>
+<form method="post" action="{% provider_login_url 'google' process='signup' %}">
+  {% csrf_token %}
+  <button class="btn btn-outline-secondary w-100" type="submit"><i class="bi bi-google"></i> Sign up with Google</button>
+</form>
+{% endif %}
+<p class="mt-4 mb-0 text-center">Already registered? <a href="{% url 'account_login' %}">Sign in</a></p>
+{% endif %}
+{% endblock %}

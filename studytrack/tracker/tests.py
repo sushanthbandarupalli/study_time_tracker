@@ -1,8 +1,14 @@
 from datetime import date, datetime, time, timedelta
+import smtplib
+import re
 from unittest.mock import patch
 
+from allauth.account.models import EmailAddress
+from django.contrib.auth import get_user_model
+from django.core.exceptions import ValidationError
+from django.core import mail
 from django.core.management import call_command
-from django.test import TestCase
+from django.test import TestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 
@@ -11,8 +17,14 @@ from .models import Subject, TimeEntry
 
 class StudyTrackTests(TestCase):
     def setUp(self):
+        self.user = get_user_model().objects.create_user(
+            username="studyuser",
+            email="studyuser@example.com",
+            password="SecureStudyPassword!2026",
+        )
+        self.client.force_login(self.user)
         call_command("seed_data")
-        self.subject = Subject.objects.first()
+        self.subject = Subject.objects.filter(user=self.user).first()
 
     def at(self, day, hour=9, minute=0):
         return timezone.make_aware(datetime.combine(day, time(hour, minute)))
@@ -20,14 +32,14 @@ class StudyTrackTests(TestCase):
     def entry(self, day, seconds, activity="class", subject=None):
         start = self.at(day)
         return TimeEntry.objects.create(
-            subject=self.subject if subject is None and activity in {"class", "notes"} else subject,
+            user=self.user, subject=self.subject if subject is None and activity in {"class", "notes"} else subject,
             activity=activity, start_datetime=start, end_datetime=start + timedelta(seconds=seconds), notes="Test entry",
         )
 
     def test_seed_data_creates_exactly_eleven_subjects_idempotently(self):
         call_command("seed_data")
-        self.assertEqual(Subject.objects.count(), 11)
-        self.assertEqual(Subject.objects.get(pk=1).name, "Subject 1")
+        self.assertEqual(Subject.objects.filter(user=self.user).count(), 11)
+        self.assertTrue(Subject.objects.filter(user=self.user, name="Subject 1").exists())
 
     def test_start_timer_creates_persistent_active_entry(self):
         start = self.at(date(2026, 9, 8))
@@ -55,7 +67,7 @@ class StudyTrackTests(TestCase):
         self.assertContains(response, "A timer is already running")
 
     def test_active_timer_survives_refresh(self):
-        active = TimeEntry.objects.create(subject=self.subject, activity="class", start_datetime=timezone.now() - timedelta(minutes=7))
+        active = TimeEntry.objects.create(user=self.user, subject=self.subject, activity="class", start_datetime=timezone.now() - timedelta(minutes=7))
         response = self.client.get(reverse("timer"))
         self.assertEqual(response.context["active"].pk, active.pk)
         self.assertGreater(response.context["elapsed_seconds"], 400)
@@ -136,7 +148,7 @@ class StudyTrackTests(TestCase):
         added = Subject.objects.get(name="Mathematics")
         self.assertEqual(added.color, "#123abc")
         self.assertTrue(added.active)
-        self.assertEqual(Subject.objects.count(), 12)
+        self.assertEqual(Subject.objects.filter(user=self.user).count(), 12)
         timer_form = self.client.get(reverse("timer")).context["form"]
         self.assertTrue(timer_form.fields["subject"].queryset.filter(pk=added.pk).exists())
 
@@ -146,7 +158,7 @@ class StudyTrackTests(TestCase):
                 response = self.client.post(reverse("settings"), {"add_subject": "1", "name": name, "color": "#123abc"})
                 self.assertEqual(response.status_code, 200)
                 self.assertContains(response, "This field is required." if not name else "A subject with this name already exists.")
-                self.assertEqual(Subject.objects.count(), 11)
+                self.assertEqual(Subject.objects.filter(user=self.user).count(), 11)
 
     def test_settings_can_delete_subject_without_sessions(self):
         response = self.client.post(reverse("delete_subject", args=[self.subject.pk]))
@@ -163,6 +175,14 @@ class StudyTrackTests(TestCase):
         self.assertContains(response, ">Cancel</button>")
         self.assertContains(response, "> Delete</button>")
 
+    def test_manage_dropdown_contains_subject_and_password_links(self):
+        response = self.client.get(reverse("dashboard"))
+        self.assertContains(response, "/static/tracker/navigation.css")
+        self.assertContains(response, "Manage")
+        self.assertContains(response, "Manage subjects")
+        self.assertContains(response, "Reset Password")
+        self.assertContains(response, 'data-bs-toggle="dropdown"')
+
     def test_settings_cannot_delete_subject_with_saved_sessions(self):
         entry = self.entry(date(2026, 9, 8), 600)
         response = self.client.post(reverse("delete_subject", args=[self.subject.pk]), follow=True)
@@ -174,6 +194,294 @@ class StudyTrackTests(TestCase):
     def test_subject_delete_requires_post(self):
         response = self.client.get(reverse("delete_subject", args=[self.subject.pk]))
         self.assertEqual(response.status_code, 405)
+
+    def test_new_user_gets_private_default_subjects(self):
+        other = get_user_model().objects.create_user(
+            username="otheruser",
+            email="other@example.com",
+            password="SecureOtherPassword!2026",
+        )
+        self.assertEqual(other.subjects.count(), 11)
+        self.assertEqual(
+            set(other.subjects.values_list("name", flat=True)),
+            set(self.user.subjects.values_list("name", flat=True)),
+        )
+        self.assertNotEqual(other.subjects.first().user_id, self.user.id)
+        self.assertEqual(Subject.objects.filter(user=self.user).count(), 11)
+
+    def test_anonymous_visitors_must_sign_in_for_tracker_pages(self):
+        self.client.logout()
+        for path in (reverse("dashboard"), reverse("timer"), reverse("settings"), reverse("time_log")):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertEqual(response.status_code, 302)
+                self.assertTrue(response["Location"].startswith(reverse("account_login")))
+
+    def test_health_check_remains_public(self):
+        self.client.logout()
+        self.assertEqual(self.client.get(reverse("health")).status_code, 200)
+
+    def test_user_cannot_access_another_users_subjects_or_entries(self):
+        other = get_user_model().objects.create_user(
+            username="otheruser",
+            email="other@example.com",
+            password="SecureOtherPassword!2026",
+        )
+        other_subject = other.subjects.first()
+        other_entry = TimeEntry.objects.create(
+            user=other,
+            subject=other_subject,
+            activity="class",
+            start_datetime=self.at(date(2026, 9, 8)),
+            end_datetime=self.at(date(2026, 9, 8), 10),
+            notes="Private notes",
+        )
+
+        self.assertEqual(self.client.get(reverse("edit_entry", args=[other_entry.pk])).status_code, 404)
+        self.assertEqual(self.client.post(reverse("delete_entry", args=[other_entry.pk])).status_code, 404)
+        self.assertEqual(self.client.post(reverse("delete_subject", args=[other_subject.pk])).status_code, 404)
+        self.assertNotContains(self.client.get(reverse("time_log")), "Private notes")
+        self.assertNotIn(b"Private notes", self.client.get(reverse("export_time_log")).content)
+
+        response = self.client.post(reverse("timer"), {"subject": other_subject.pk, "activity": "class"})
+        self.assertContains(response, "Select a valid choice")
+        self.assertFalse(TimeEntry.objects.filter(user=self.user, end_datetime__isnull=True).exists())
+        with self.assertRaisesMessage(ValidationError, "Choose one of your own subjects."):
+            TimeEntry.objects.create(
+                user=self.user, subject=other_subject, activity="class",
+                start_datetime=self.at(date(2026, 9, 8)),
+            )
+        dashboard = self.client.get(reverse("dashboard"))
+        self.assertEqual(len(dashboard.context["subjects"]), 11)
+        self.assertEqual(dashboard.context["entries"], [])
+
+    def test_sign_in_page_renders_email_login_and_signup_link(self):
+        self.client.logout()
+        response = self.client.get(reverse("account_login"))
+        self.assertContains(response, "Sign in to access your private study data.")
+        self.assertContains(response, reverse("account_signup"))
+        self.assertContains(response, 'class="auth-remember-toggle"')
+        self.assertContains(response, 'class="auth-switch-track"')
+        self.assertContains(response, 'id="id_remember"')
+        self.assertContains(response, "Remember Me")
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_password_reset_does_not_send_email_for_unregistered_address(self):
+        self.client.logout()
+        response = self.client.post(reverse("account_reset_password"), {
+            "email": "not-registered@example.com",
+        })
+        self.assertRedirects(response, reverse("account_reset_password_done"))
+        self.assertEqual(len(mail.outbox), 0)
+        done_response = self.client.get(reverse("account_reset_password_done"))
+        self.assertContains(done_response, "/static/tracker/style.css")
+        self.assertContains(done_response, "/static/tracker/auth.css")
+        self.assertContains(done_response, "If an account exists for that email")
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_password_reset_sends_email_for_registered_address(self):
+        self.client.logout()
+        EmailAddress.objects.create(
+            user=self.user,
+            email=self.user.email,
+            primary=True,
+            verified=True,
+        )
+        response = self.client.post(reverse("account_reset_password"), {
+            "email": self.user.email,
+        })
+        self.assertRedirects(response, reverse("account_reset_password_done"))
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn(self.user.email, mail.outbox[0].to)
+
+    def test_password_reset_form_uses_studytrack_styles(self):
+        self.client.logout()
+        response = self.client.get(reverse("account_reset_password"))
+        self.assertContains(response, "/static/tracker/style.css")
+        self.assertContains(response, "/static/tracker/auth.css")
+        self.assertContains(response, "app-card form-card auth-card")
+        self.assertContains(response, "Reset password")
+
+    def test_email_verification_page_uses_studytrack_styles(self):
+        self.client.logout()
+        self.client.post(reverse("account_signup"), {
+            "email": "verification-screen@example.com",
+            "password1": "A-secure-unique-password-47!",
+            "password2": "A-secure-unique-password-47!",
+        })
+        response = self.client.get(reverse("account_email_verification_sent"))
+        self.assertContains(response, "/static/tracker/style.css")
+        self.assertContains(response, "/static/tracker/auth.css")
+        self.assertContains(response, "auth-screen")
+        self.assertContains(response, "app-card form-card auth-card")
+        self.assertContains(response, "Verify your email")
+        self.assertContains(response, "The code expires shortly.")
+        self.assertContains(response, "Confirm email")
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_signup_with_registered_email_offers_login_without_sending_code(self):
+        self.client.logout()
+        response = self.client.post(reverse("account_signup"), {
+            "email": self.user.email.upper(),
+            "password1": "A-secure-unique-password-47!",
+            "password2": "A-secure-unique-password-47!",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "This email is already registered")
+        self.assertContains(response, "Try signing in")
+        self.assertContains(response, reverse("account_login"))
+        self.assertNotContains(response, "Enter the six-digit code")
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertEqual(get_user_model().objects.filter(email__iexact=self.user.email).count(), 1)
+
+    @override_settings(
+        GOOGLE_OAUTH_ENABLED=True,
+        SOCIALACCOUNT_PROVIDERS={"google": {"APP": {"client_id": "test-client", "secret": "test-secret", "key": ""}}},
+    )
+    def test_google_signup_is_offered_when_oauth_is_configured(self):
+        self.client.logout()
+        response = self.client.get(reverse("account_signup"))
+        self.assertContains(response, "Sign up with Google")
+        self.assertContains(response, f'action="{reverse("google_login")}?process=signup"')
+        self.assertContains(response, 'method="post"')
+        login_response = self.client.get(reverse("account_login"))
+        self.assertContains(login_response, "Continue with Google")
+        self.assertContains(login_response, f'action="{reverse("google_login")}?process=login"')
+
+    def test_active_timer_is_isolated_per_user(self):
+        other = get_user_model().objects.create_user(
+            username="otheruser",
+            email="other@example.com",
+            password="SecureOtherPassword!2026",
+        )
+        TimeEntry.objects.create(
+            user=other, subject=other.subjects.first(), activity="class",
+            start_datetime=timezone.now() - timedelta(minutes=5),
+        )
+        response = self.client.post(reverse("timer"), {"subject": self.subject.pk, "activity": "class"})
+        self.assertRedirects(response, reverse("timer"))
+        self.assertEqual(TimeEntry.objects.filter(end_datetime__isnull=True).count(), 2)
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_email_registration_requires_verification(self):
+        self.client.logout()
+        response = self.client.post(reverse("account_signup"), {
+            "email": "newuser@example.com",
+            "password1": "A-secure-unique-password-47!",
+            "password2": "A-secure-unique-password-47!",
+        })
+        self.assertEqual(response.status_code, 302)
+        new_user = get_user_model().objects.get(email="newuser@example.com")
+        self.assertFalse(self.client.session.get("_auth_user_id"))
+        self.assertTrue(new_user.check_password("A-secure-unique-password-47!"))
+        self.assertNotEqual(new_user.password, "A-secure-unique-password-47!")
+        self.assertEqual(new_user.subjects.count(), 11)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("newuser@example.com", mail.outbox[0].to)
+        self.assertIn("Your email verification code is listed below.", mail.outbox[0].body)
+        login_response = self.client.post(reverse("account_login"), {
+            "login": "newuser@example.com",
+            "password": "A-secure-unique-password-47!",
+        })
+        self.assertEqual(login_response.status_code, 302)
+        self.assertFalse(self.client.session.get("_auth_user_id"))
+
+        code = next(line.strip() for line in mail.outbox[0].body.splitlines() if re.fullmatch(r"\d{6}", line.strip()))
+        verification_response = self.client.post(
+            reverse("account_email_verification_sent"),
+            {"code": code},
+        )
+        self.assertEqual(verification_response.status_code, 302)
+        self.assertTrue(
+            EmailAddress.objects.filter(user=new_user, email="newuser@example.com", verified=True).exists()
+        )
+        verified_login = self.client.post(reverse("account_login"), {
+            "login": "newuser@example.com",
+            "password": "A-secure-unique-password-47!",
+        })
+        self.assertEqual(verified_login.status_code, 302)
+        self.assertEqual(str(self.client.session["_auth_user_id"]), str(new_user.pk))
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    @patch(
+        "allauth.account.adapter.DefaultAccountAdapter.send_confirmation_mail",
+        side_effect=smtplib.SMTPException("mail service unavailable"),
+    )
+    def test_signup_email_delivery_failure_shows_error_and_rolls_back_account(self, send_confirmation_mail):
+        self.client.logout()
+        response = self.client.post(reverse("account_signup"), {
+            "email": "delivery-failure@example.com",
+            "password1": "A-secure-unique-password-47!",
+            "password2": "A-secure-unique-password-47!",
+        })
+        self.assertEqual(response.status_code, 503)
+        self.assertContains(response, "Unable to send the OTP", status_code=503)
+        self.assertFalse(get_user_model().objects.filter(email="delivery-failure@example.com").exists())
+
+    @override_settings(
+        EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend",
+        ACCOUNT_RATE_LIMITS=False,
+    )
+    def test_failed_otp_resend_shows_error_on_verification_card(self):
+        self.client.logout()
+        signup_response = self.client.post(reverse("account_signup"), {
+            "email": "resend-failure@example.com",
+            "password1": "A-secure-unique-password-47!",
+            "password2": "A-secure-unique-password-47!",
+        })
+        self.assertEqual(signup_response.status_code, 302)
+
+        with patch(
+            "allauth.account.adapter.DefaultAccountAdapter.send_confirmation_mail",
+            side_effect=smtplib.SMTPException("mail service unavailable"),
+        ):
+            resend_response = self.client.post(
+                reverse("account_email_verification_sent"),
+                {"action": "resend"},
+                follow=True,
+            )
+        self.assertContains(resend_response, "Unable to send the OTP")
+        self.assertContains(resend_response, "alert-danger")
+        self.assertContains(resend_response, "Verify your email")
+
+    def test_password_change_requires_current_password_and_matching_new_password(self):
+        self.user.set_password("Existing-password-47!")
+        self.user.save(update_fields=["password"])
+        self.client.force_login(self.user)
+        change_url = reverse("account_change_password")
+
+        page_response = self.client.get(change_url)
+        self.assertContains(page_response, "/static/tracker/style.css")
+        self.assertContains(page_response, "/static/tracker/auth.css")
+        self.assertContains(page_response, "app-card form-card auth-card")
+        self.assertContains(page_response, f'href="{change_url}"')
+
+        invalid_response = self.client.post(change_url, {
+            "oldpassword": "Incorrect-password-47!",
+            "password1": "New-secure-password-58!",
+            "password2": "New-secure-password-58!",
+        })
+        self.assertEqual(invalid_response.status_code, 200)
+        self.assertContains(invalid_response, "Please type your current password.")
+        self.assertTrue(self.user.check_password("Existing-password-47!"))
+
+        mismatch_response = self.client.post(change_url, {
+            "oldpassword": "Existing-password-47!",
+            "password1": "New-secure-password-58!",
+            "password2": "Different-password-69!",
+        })
+        self.assertEqual(mismatch_response.status_code, 200)
+        self.assertContains(mismatch_response, "You must type the same password each time.")
+        self.assertTrue(self.user.check_password("Existing-password-47!"))
+
+        success_response = self.client.post(change_url, {
+            "oldpassword": "Existing-password-47!",
+            "password1": "New-secure-password-58!",
+            "password2": "New-secure-password-58!",
+        })
+        self.assertRedirects(success_response, change_url)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("New-secure-password-58!"))
 
     def test_csv_export_contains_completed_entries(self):
         self.entry(date(2026, 9, 8), 3600, "class")

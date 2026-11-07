@@ -1,12 +1,14 @@
 from django.core.management.base import BaseCommand
-from tracker.models import Subject
+from django.contrib.auth import get_user_model
+
+from tracker.defaults import create_default_subjects
 
 
 class Command(BaseCommand):
-    help = "Create the eleven default StudyTrack subjects without duplicating them."
-    colors = ["#3563e9", "#7c4dff", "#16a56b", "#e67e22", "#e55252", "#0f9ca6", "#a855f7", "#d97706", "#db2777", "#4f7dff", "#64748b"]
+    help = "Ensure each registered user has the eleven default StudyTrack subjects."
 
     def handle(self, *args, **options):
-        for number, color in enumerate(self.colors, 1):
-            Subject.objects.get_or_create(name=f"Subject {number}", defaults={"color": color})
-        self.stdout.write(self.style.SUCCESS("StudyTrack subjects are ready."))
+        users = get_user_model().objects.all()
+        for user in users.iterator():
+            create_default_subjects(user)
+        self.stdout.write(self.style.SUCCESS(f"Default subjects are ready for {users.count()} users."))
