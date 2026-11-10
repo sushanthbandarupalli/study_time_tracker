@@ -98,6 +98,9 @@
 }
 
 .auth-remember-wrap .auth-remember-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
   margin-bottom: 0;
 }
 

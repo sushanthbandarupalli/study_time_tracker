@@ -3,13 +3,17 @@ from django.db import migrations, models
 import django.db.models.deletion
 
 
-def clear_pre_account_data(apps, schema_editor):
-    """Remove shared pre-auth data so it cannot be claimed by the first account."""
+def refuse_legacy_data_loss(apps, schema_editor):
     database = schema_editor.connection.alias
     TimeEntry = apps.get_model("tracker", "TimeEntry")
     Subject = apps.get_model("tracker", "Subject")
-    TimeEntry.objects.using(database).all().delete()
-    Subject.objects.using(database).all().delete()
+    has_entries = TimeEntry.objects.using(database).exists()
+    has_subjects = Subject.objects.using(database).exists()
+    if has_entries or has_subjects:
+        raise RuntimeError(
+            "The account-ownership migration found existing study data and stopped "
+            "to prevent data loss. Back up and assign the legacy data before retrying."
+        )
 
 
 class Migration(migrations.Migration):
@@ -39,7 +43,7 @@ class Migration(migrations.Migration):
                 to=settings.AUTH_USER_MODEL,
             ),
         ),
-        migrations.RunPython(clear_pre_account_data),
+        migrations.RunPython(refuse_legacy_data_loss),
         migrations.AlterField(
             model_name="subject",
             name="user",

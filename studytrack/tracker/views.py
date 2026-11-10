@@ -1,9 +1,11 @@
 import calendar
 import csv
 import json
+import re
 from datetime import date, datetime, time, timedelta
 
 from django.contrib.auth.decorators import login_required
+from django.contrib.auth import get_user_model
 from django.contrib import messages
 from django.db import transaction
 from django.db.models.deletion import ProtectedError
@@ -19,6 +21,7 @@ from .models import Subject, TimeEntry
 
 ACTIVITIES = [choice.value for choice in TimeEntry.Activity]
 ACTIVITY_COLORS = {"class": "#3563e9", "notes": "#8b5cf6", "free": "#f59e0b", "other": "#64748b"}
+_JSON_SCRIPT_ESCAPES = str.maketrans({"<": "\\u003C", ">": "\\u003E", "&": "\\u0026"})
 
 
 def duration(seconds):
@@ -31,6 +34,17 @@ def duration(seconds):
 def display_entry(entry):
     entry.duration_display = duration(entry.duration_seconds)
     return entry
+
+
+def json_for_script(value):
+    return json.dumps(value).translate(_JSON_SCRIPT_ESCAPES)
+
+
+def spreadsheet_safe(value):
+    value = str(value or "")
+    if value.lstrip(" \t\r\n")[:1] in {"=", "+", "-", "@"}:
+        return f"'{value}"
+    return value
 
 
 def completed_for_dates(user, start, end):
@@ -74,8 +88,8 @@ def dashboard(request):
     metrics = metric_data(entries)
     context = {
         "selected_date": selected, "available_dates": dates, "entries": [display_entry(e) for e in entries], "subjects": subjects, "metrics": metrics,
-        "chart_labels": json.dumps([s.name for s in subjects]), "chart_values": json.dumps([round(class_totals.get(s.id, 0) / 3600, 2) for s in subjects]),
-        "chart_colors": json.dumps([s.color for s in subjects]), "distribution": json.dumps([round(metrics[key] / 3600, 2) for key in ("class", "notes", "free", "other")]),
+        "chart_labels": json_for_script([s.name for s in subjects]), "chart_values": json_for_script([round(class_totals.get(s.id, 0) / 3600, 2) for s in subjects]),
+        "chart_colors": json_for_script([s.color for s in subjects]), "distribution": json_for_script([round(metrics[key] / 3600, 2) for key in ("class", "notes", "free", "other")]),
     }
     return render(request, "tracker/dashboard.html", context)
 
@@ -89,6 +103,7 @@ def timer(request):
             messages.error(request, "A timer is already running. Stop it before starting another.")
         elif form.is_valid():
             with transaction.atomic():
+                get_user_model().objects.select_for_update().get(pk=request.user.pk)
                 if TimeEntry.objects.select_for_update().filter(user=request.user, end_datetime__isnull=True).exists():
                     messages.error(request, "A timer is already running. Stop it before starting another.")
                 else:
@@ -135,9 +150,9 @@ def export_time_log(request):
     entries = TimeEntry.objects.filter(user=request.user, end_datetime__isnull=False).select_related("subject").order_by("-start_datetime")
     for entry in entries:
         writer.writerow([
-            timezone.localtime(entry.start_datetime).strftime("%Y-%m-%d"), entry.subject.name if entry.subject else "",
+            timezone.localtime(entry.start_datetime).strftime("%Y-%m-%d"), spreadsheet_safe(entry.subject.name if entry.subject else ""),
             entry.get_activity_display(), timezone.localtime(entry.start_datetime).strftime("%H:%M"),
-            timezone.localtime(entry.end_datetime).strftime("%H:%M"), duration(entry.duration_seconds), entry.notes,
+            timezone.localtime(entry.end_datetime).strftime("%H:%M"), duration(entry.duration_seconds), spreadsheet_safe(entry.notes),
         ])
     return response
 
@@ -191,9 +206,9 @@ def weekly(request):
     notes_map = {row["start_datetime__date"]: row["seconds"] or 0 for row in entries.filter(activity="notes").values("start_datetime__date").annotate(seconds=Sum("duration_seconds"))}
     return render(request, "tracker/weekly.html", {
         "start": start, "end": end, "previous": start - timedelta(days=7), "next": start + timedelta(days=7), "days": days, "rows": rows,
-        "metrics": metric_data(entries), "total_class": duration(sum(daily_class)), "labels": json.dumps([d.strftime("%a") for d in days]),
-        "daily_class": json.dumps([round(v / 3600, 2) for v in daily_class]), "daily_notes": json.dumps([round(notes_map.get(d, 0) / 3600, 2) for d in days]),
-        "subject_labels": json.dumps([s.name for s in subjects]), "subject_values": json.dumps([round(r["seconds"] / 3600, 2) for r in rows]), "subject_colors": json.dumps([s.color for s in subjects]),
+        "metrics": metric_data(entries), "total_class": duration(sum(daily_class)), "labels": json_for_script([d.strftime("%a") for d in days]),
+        "daily_class": json_for_script([round(v / 3600, 2) for v in daily_class]), "daily_notes": json_for_script([round(notes_map.get(d, 0) / 3600, 2) for d in days]),
+        "subject_labels": json_for_script([s.name for s in subjects]), "subject_values": json_for_script([round(r["seconds"] / 3600, 2) for r in rows]), "subject_colors": json_for_script([s.color for s in subjects]),
     })
 
 
@@ -224,8 +239,8 @@ def monthly(request):
     next_month = (end + timedelta(days=1)).replace(day=1)
     return render(request, "tracker/monthly.html", {
         "start": start, "end": end, "previous": previous, "next": next_month, "metrics": metric_data(entries), "summary": summary,
-        "labels": json.dumps([str(day.day) for day in days]), "daily": json.dumps([round(daily.get(day, 0) / 3600, 2) for day in days]),
-        "subject_labels": json.dumps([s.name for s in subjects]), "subject_values": json.dumps([round(row["class_seconds"] / 3600, 2) for row in summary]), "subject_colors": json.dumps([s.color for s in subjects]),
+        "labels": json_for_script([str(day.day) for day in days]), "daily": json_for_script([round(daily.get(day, 0) / 3600, 2) for day in days]),
+        "subject_labels": json_for_script([s.name for s in subjects]), "subject_values": json_for_script([round(row["class_seconds"] / 3600, 2) for row in summary]), "subject_colors": json_for_script([s.color for s in subjects]),
     })
 
 
@@ -249,11 +264,14 @@ def settings_view(request):
         if len(normalized_names) != len(set(normalized_names)):
             messages.error(request, "Each subject must have a unique name.")
             return render(request, "tracker/settings.html", {"subjects": subjects, "subject_form": SubjectForm(user=request.user)})
+        if any(len(name) > 120 for name in submitted_names.values()):
+            messages.error(request, "Subject names must be 120 characters or fewer.")
+            return render(request, "tracker/settings.html", {"subjects": subjects, "subject_form": SubjectForm(user=request.user)})
         for subject in subjects:
             name = submitted_names[subject.id]
             color = request.POST.get(f"color_{subject.id}", subject.color)
             subject.name = name or subject.name
-            subject.color = color if len(color) == 7 and color.startswith("#") else subject.color
+            subject.color = color if re.fullmatch(r"#[0-9a-fA-F]{6}", color) else subject.color
             subject.active = f"active_{subject.id}" in request.POST
             subject.save()
         messages.success(request, "Subject settings saved across StudyTrack.")

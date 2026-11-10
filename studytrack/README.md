@@ -71,9 +71,9 @@ Create a Web application OAuth client in Google Cloud Console, set
 `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, and add
 `https://YOUR_HOST/accounts/google/login/callback/` as an authorized redirect URI.
 
-The account-ownership migration intentionally deletes subjects and sessions
-created before authentication was added. Back up any database before migrating;
-the cleanup migration is irreversible.
+The account-ownership migration stops if it finds pre-authentication subjects or
+sessions, to avoid deleting or assigning shared data to the wrong account.
+Back up and manually assign that legacy data before retrying the migration.
 
 ## CSV backup
 

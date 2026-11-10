@@ -8,8 +8,10 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-SECRET_KEY = os.environ.get("SECRET_KEY", "unsafe-local-development-key-change-before-deploying")
-DEBUG = os.environ.get("DEBUG", "True").lower() in {"1", "true", "yes", "on"}
+DEBUG = os.environ.get("DEBUG", "False").lower() in {"1", "true", "yes", "on"}
+SECRET_KEY = os.environ.get("SECRET_KEY", "")
+if not SECRET_KEY:
+    raise ImproperlyConfigured("SECRET_KEY must be configured in the environment.")
 ALLOWED_HOSTS = [host.strip() for host in os.environ.get("ALLOWED_HOSTS", ".onrender.com,localhost,127.0.0.1,testserver").split(",") if host.strip()]
 CSRF_TRUSTED_ORIGINS = [url.strip() for url in os.environ.get("CSRF_TRUSTED_ORIGINS", "https://*.onrender.com").split(",") if url.strip()]
 INSTALLED_APPS = [

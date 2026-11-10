@@ -1,7 +1,8 @@
 from datetime import date, datetime, time, timedelta
+from importlib import import_module
 import smtplib
 import re
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from allauth.account.models import EmailAddress
 from django.contrib.auth import get_user_model
@@ -159,6 +160,27 @@ class StudyTrackTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertContains(response, "This field is required." if not name else "A subject with this name already exists.")
                 self.assertEqual(Subject.objects.filter(user=self.user).count(), 11)
+
+    def test_settings_rejects_invalid_subject_color_and_overlong_name(self):
+        subjects = list(Subject.objects.filter(user=self.user))
+        payload = {}
+        for subject in subjects:
+            payload[f"name_{subject.pk}"] = subject.name
+            payload[f"color_{subject.pk}"] = subject.color
+            payload[f"active_{subject.pk}"] = "on"
+
+        payload[f"color_{self.subject.pk}"] = "#12zzzz"
+        response = self.client.post(reverse("settings"), payload)
+        self.assertRedirects(response, reverse("settings"))
+        self.subject.refresh_from_db()
+        self.assertEqual(self.subject.color, "#3563e9")
+
+        payload[f"name_{self.subject.pk}"] = "x" * 121
+        response = self.client.post(reverse("settings"), payload)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Subject names must be 120 characters or fewer.")
+        self.subject.refresh_from_db()
+        self.assertEqual(self.subject.name, "Subject 1")
 
     def test_settings_can_delete_subject_without_sessions(self):
         response = self.client.post(reverse("delete_subject", args=[self.subject.pk]))
@@ -490,6 +512,40 @@ class StudyTrackTests(TestCase):
         self.assertEqual(response["Content-Type"], "text/csv")
         self.assertIn(b"Date,Subject,Activity,Start,End,Duration,Notes", response.content)
         self.assertIn(b"Subject 1,Class", response.content)
+
+    def test_csv_export_neutralizes_spreadsheet_formulas(self):
+        entry = self.entry(date(2026, 9, 8), 3600, "class")
+        entry.notes = " =1+1"
+        entry.save()
+        response = self.client.get(reverse("export_time_log"))
+        self.assertIn(b"' =1+1", response.content)
+
+    def test_chart_json_escapes_user_controlled_subject_names(self):
+        self.subject.name = "</script><script>qa()</script>"
+        self.subject.save()
+        self.entry(timezone.localdate(), 60, "class")
+        for url in (reverse("dashboard"), reverse("weekly"), reverse("monthly")):
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertEqual(response.status_code, 200)
+                self.assertNotContains(response, "</script><script>qa()</script>")
+                self.assertContains(response, r"\u003C/script\u003E\u003Cscript\u003Eqa()\u003C/script\u003E")
+
+    def test_legacy_data_migration_stops_without_deleting_existing_rows(self):
+        migration = import_module("tracker.migrations.0003_user_owned_data")
+        historical_models = {name: Mock() for name in ("TimeEntry", "Subject")}
+        for model in historical_models.values():
+            model.objects.using.return_value.exists.return_value = True
+        apps = Mock()
+        apps.get_model.side_effect = lambda app_label, model_name: historical_models[model_name]
+        schema_editor = Mock()
+        schema_editor.connection.alias = "default"
+
+        with self.assertRaisesMessage(RuntimeError, "stopped to prevent data loss"):
+            migration.refuse_legacy_data_loss(apps, schema_editor)
+
+        for model in historical_models.values():
+            model.objects.using.return_value.delete.assert_not_called()
 
     def test_health_check_returns_ok(self):
         response = self.client.get(reverse("health"))
