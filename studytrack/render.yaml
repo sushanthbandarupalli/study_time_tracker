@@ -22,10 +22,6 @@ projects:
                 sync: false
               - key: SITE_DOMAIN
                 sync: false
-              - key: RESEND_API_KEY
-                sync: false
-              - key: DEFAULT_FROM_EMAIL
-                sync: false
               - key: GOOGLE_OAUTH_CLIENT_ID
                 sync: false
               - key: GOOGLE_OAUTH_CLIENT_SECRET

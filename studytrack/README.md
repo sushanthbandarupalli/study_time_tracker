@@ -17,24 +17,19 @@ StudyTrack requires Neon PostgreSQL and will not fall back to SQLite. Set
 `DATABASE_URL` in this folder's `.env` using the connection string from your
 Neon project. Django loads `.env` automatically.
 
-Copy `.env.example` to `.env`. For Gmail SMTP, set `EMAIL_HOST_USER` to your
-Gmail address and `EMAIL_HOST_PASSWORD` to a Google App Password. Alternatively,
-set `RESEND_API_KEY` and `DEFAULT_FROM_EMAIL` to use Resend. Resend requires a
-verified sender domain. If neither provider is configured in development, the
-message (including the verification code) is printed in the server console.
-Then open http://127.0.0.1:8000/ and create an account. Each new user receives
-eleven private default subjects; additional subjects can be added in Settings.
+Copy `.env.example` to `.env` and set `DATABASE_URL`. Open
+http://127.0.0.1:8000/ to create an account with a unique username and password.
+Each new user receives eleven private default subjects; additional subjects can
+be added in Settings.
 
-Email/password accounts must verify their email address with the emailed OTP
-before signing in. If the email is already registered, signup offers a sign-in
-link instead of sending another code. OTP delivery failures are shown to the
-user without leaving a partial account. Signed-in users can change their
-password by confirming the current password and entering the new password twice.
-Password-reset instructions are sent only for registered accounts; the result
-page uses the same neutral message either way.
-Google sign-in is enabled when `GOOGLE_OAUTH_CLIENT_ID` and
-`GOOGLE_OAUTH_CLIENT_SECRET` are configured. Subjects, timers, reports, and CSV
-exports are scoped to the signed-in user.
+Email verification and email-based password resets are not used. Configure
+Google OAuth with `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`;
+users must link a Google account before accessing tracker data. To recover a
+forgotten password, sign in through the previously linked Google account, then
+use **Recovery settings** to set a new password. Keep Google linked to the
+account so it remains a recovery option. Google sign-in can also be used to
+create an account. Subjects, timers, reports, and CSV exports are scoped to the
+signed-in user.
 
 Run validation with:
 
@@ -48,13 +43,8 @@ python manage.py makemigrations --check
 
 Copy `.env.example` to `.env`; Django loads it automatically. Set
 `DATABASE_URL` to your Neon PostgreSQL connection string (use the pooled
-endpoint for app traffic). For Gmail delivery, enable 2-Step
-Verification on the Google account, create an App Password in Google Account
-Security settings, and use that App Password (not the normal Gmail password) as
-`EMAIL_HOST_PASSWORD`. For Resend, configure `RESEND_API_KEY` and a
-`DEFAULT_FROM_EMAIL` on a verified sender domain. Render Free blocks outbound
-SMTP, so use the Resend API there rather than Gmail SMTP. Do not commit `.env`,
-API keys, or passwords.
+endpoint for app traffic). Do not commit `.env`, OAuth credentials, or
+passwords.
 
 | Variable | Local value | Production value |
 | --- | --- | --- |
@@ -64,17 +54,16 @@ API keys, or passwords.
 | `ALLOWED_HOSTS` | `localhost,127.0.0.1` | `.onrender.com` or your exact host |
 | `CSRF_TRUSTED_ORIGINS` | blank | `https://*.onrender.com` or your exact URL |
 | `SITE_DOMAIN` | `localhost:8000` | Exact public host, without scheme |
-| `EMAIL_HOST`, `EMAIL_PORT` | `smtp.gmail.com`, `587` | SMTP server and port for verification email |
-| `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` | Gmail address and Google App Password | Gmail SMTP credentials |
-| `EMAIL_USE_TLS` | `True` | `True` for SMTP STARTTLS |
-| `RESEND_API_KEY` | blank | Resend API key; preferred for Render Free |
-| `DEFAULT_FROM_EMAIL` | Gmail address or blank | Sender address; verify its domain with Resend |
-| `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | blank | Optional Google OAuth credentials |
+| `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | Google OAuth credentials | Required to let users link Google and recover passwords |
 
 Never commit the `.env` file or a production database URL.
 Create a Web application OAuth client in Google Cloud Console, set
 `GOOGLE_OAUTH_CLIENT_ID` and `GOOGLE_OAUTH_CLIENT_SECRET`, and add
-`https://YOUR_HOST/accounts/google/login/callback/` as an authorized redirect URI.
+`http://127.0.0.1:8000/accounts/google/login/callback/` as a local authorized
+redirect URI. For Render, add the deployed callback URI using the service's
+`onrender.com` hostname. For a no-cost test deployment, keep the consent screen
+in Testing and add the Google accounts that should be allowed to sign in as test
+users; Google may show an unverified-app warning until the app is verified.
 
 The account-ownership migration stops if it finds pre-authentication subjects or
 sessions, to avoid deleting or assigning shared data to the wrong account.
@@ -89,14 +78,16 @@ Open **Time Log** and choose **Export CSV**. The file contains every completed e
 1. Create a free Neon project and copy its pooled PostgreSQL connection string.
 2. Push this repository to GitHub.
 3. In Render, choose **New → Blueprint** and select the repository. The included `render.yaml` creates the StudyTrack web service.
-4. Set `DATABASE_URL`, `SITE_DOMAIN`, `RESEND_API_KEY`, and
-   `DEFAULT_FROM_EMAIL` in Render. The sender address must use a verified Resend
-   domain. Keep the API key in Render's secret environment settings, never in
-   Git. Render generates `SECRET_KEY` and sets `DEBUG=False` from the blueprint.
-5. Optionally add Google OAuth credentials and register the deployed callback URI with Google Cloud.
-6. Deploy. Render runs install, `collectstatic`, and migrations automatically, then starts Gunicorn. `/health/` is configured as the health check.
+4. Set `DATABASE_URL`, `SITE_DOMAIN`, `GOOGLE_OAUTH_CLIENT_ID`, and
+   `GOOGLE_OAUTH_CLIENT_SECRET` in Render. Register
+   `https://YOUR-RENDER-HOST/accounts/google/login/callback/` as an authorized
+   redirect URI in Google Cloud. Keep OAuth credentials in Render's secret
+   environment settings, never in Git. Render generates `SECRET_KEY` and sets
+   `DEBUG=False` from the blueprint.
+5. Deploy. Render runs install, `collectstatic`, and migrations automatically,
+   then starts Gunicorn. `/health/` is configured as the health check.
 
-Render's Free service blocks outbound SMTP, so use the Resend API rather than
-Gmail SMTP for verification emails. The service can sleep when idle; the first
-request after sleep can be slow. Data remains safe because production data is
-stored in Neon PostgreSQL rather than Render's ephemeral filesystem.
+No email sender or paid domain is needed for this authentication flow. The
+service can sleep when idle; the first request after sleep can be slow. Data
+remains safe because production data is stored in Neon PostgreSQL rather than
+Render's ephemeral filesystem.

@@ -1,0 +1,25 @@
+{% extends 'account/base.html' %}
+{% load allauth socialaccount %}
+{% block title %}Recovery settings · StudyTrack{% endblock %}
+{% block account_content %}
+<div class="page-heading">
+  <p class="eyebrow">Account security</p>
+  <h1>Recovery settings</h1>
+  {% if google_linked %}
+  <p>Your Google account is linked and can be used to recover your StudyTrack password.</p>
+  {% else %}
+  <p>Link a Google account to protect access to your study data and recover your password if you forget it.</p>
+  {% endif %}
+</div>
+{% if google_linked %}
+<div class="alert alert-success" role="status"><i class="bi bi-check-circle"></i> Google recovery is enabled.</div>
+<a class="btn btn-primary w-100" href="{% url 'account_set_password' %}">Set or reset password</a>
+{% elif google_oauth_enabled %}
+<form method="post" action="{% provider_login_url 'google' process='connect' %}">
+  {% csrf_token %}
+  <button class="btn btn-primary w-100" type="submit"><i class="bi bi-google"></i> Link Google account</button>
+</form>
+{% else %}
+<div class="alert alert-warning" role="alert">Google sign-in is not configured yet. Ask the site administrator to configure Google OAuth.</div>
+{% endif %}
+{% endblock %}

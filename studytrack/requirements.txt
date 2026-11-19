@@ -1,6 +1,5 @@
 Django==5.2.6
 django-allauth[socialaccount]==65.21.1
-django-anymail[resend]==15.2
 dj-database-url==2.3.0
 gunicorn==23.0.0
 psycopg[binary]==3.2.3

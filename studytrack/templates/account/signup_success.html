@@ -1,0 +1,10 @@
+{% extends 'account/base.html' %}
+{% block title %}Account created · StudyTrack{% endblock %}
+{% block account_content %}
+<div class="page-heading text-center">
+  <p class="eyebrow">You’re ready to begin</p>
+  <h1>Account created successfully</h1>
+  <p>Sign in with your username and password to continue.</p>
+</div>
+<a class="btn btn-primary w-100" href="{% url 'account_login' %}">Go to sign in</a>
+{% endblock %}
