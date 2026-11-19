@@ -17,7 +17,7 @@ CSRF_TRUSTED_ORIGINS = [url.strip() for url in os.environ.get("CSRF_TRUSTED_ORIG
 INSTALLED_APPS = [
     "django.contrib.admin", "django.contrib.auth", "django.contrib.contenttypes",
     "django.contrib.sessions", "django.contrib.messages", "django.contrib.staticfiles", "django.contrib.sites",
-    "allauth", "allauth.account", "allauth.socialaccount", "allauth.socialaccount.providers.google",
+    "allauth", "allauth.account", "allauth.socialaccount", "allauth.socialaccount.providers.google", "anymail",
     "tracker",
 ]
 MIDDLEWARE = [
@@ -96,15 +96,24 @@ EMAIL_PORT = int(os.environ.get("EMAIL_PORT", "587"))
 EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = os.environ.get("EMAIL_HOST_PASSWORD", "")
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() in {"1", "true", "yes", "on"}
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", EMAIL_HOST_USER).strip()
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "").strip() or EMAIL_HOST_USER
+RESEND_API_KEY = os.environ.get("RESEND_API_KEY", "").strip()
 SMTP_CREDENTIALS_CONFIGURED = bool(EMAIL_HOST_USER and EMAIL_HOST_PASSWORD)
-EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend" if SMTP_CREDENTIALS_CONFIGURED else (
-    "django.core.mail.backends.console.EmailBackend"
+if RESEND_API_KEY:
+    EMAIL_BACKEND = "anymail.backends.resend.EmailBackend"
+    ANYMAIL = {"RESEND_API_KEY": RESEND_API_KEY}
+elif SMTP_CREDENTIALS_CONFIGURED:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+EMAIL_CONFIGURED = bool(
+    DEFAULT_FROM_EMAIL
+    and (RESEND_API_KEY or (EMAIL_HOST and SMTP_CREDENTIALS_CONFIGURED))
 )
-if not DEBUG and not all((EMAIL_HOST, EMAIL_HOST_USER, EMAIL_HOST_PASSWORD, DEFAULT_FROM_EMAIL)):
+if not DEBUG and not EMAIL_CONFIGURED:
     raise ImproperlyConfigured(
-        "Production email verification requires EMAIL_HOST_USER and "
-        "EMAIL_HOST_PASSWORD. Configure a verified sender with DEFAULT_FROM_EMAIL."
+        "Production email verification requires a Resend API key and verified "
+        "DEFAULT_FROM_EMAIL, or complete SMTP credentials and DEFAULT_FROM_EMAIL."
     )
 LANGUAGE_CODE = "en-us"
 TIME_ZONE = "Asia/Kolkata"

@@ -17,12 +17,13 @@ StudyTrack requires Neon PostgreSQL and will not fall back to SQLite. Set
 `DATABASE_URL` in this folder's `.env` using the connection string from your
 Neon project. Django loads `.env` automatically.
 
-Copy `.env.example` to `.env` and set `EMAIL_HOST_USER` to your Gmail address and
-`EMAIL_HOST_PASSWORD` to a Google App Password. Then open http://127.0.0.1:8000/
-and create an account. A six-digit verification code is sent to that inbox. If
-SMTP credentials are missing, the message (including the code) is printed in the
-development server console. Each new user receives eleven private default
-subjects; additional subjects can be added in Settings.
+Copy `.env.example` to `.env`. For Gmail SMTP, set `EMAIL_HOST_USER` to your
+Gmail address and `EMAIL_HOST_PASSWORD` to a Google App Password. Alternatively,
+set `RESEND_API_KEY` and `DEFAULT_FROM_EMAIL` to use Resend. Resend requires a
+verified sender domain. If neither provider is configured in development, the
+message (including the verification code) is printed in the server console.
+Then open http://127.0.0.1:8000/ and create an account. Each new user receives
+eleven private default subjects; additional subjects can be added in Settings.
 
 Email/password accounts must verify their email address with the emailed OTP
 before signing in. If the email is already registered, signup offers a sign-in
@@ -50,7 +51,10 @@ Copy `.env.example` to `.env`; Django loads it automatically. Set
 endpoint for app traffic). For Gmail delivery, enable 2-Step
 Verification on the Google account, create an App Password in Google Account
 Security settings, and use that App Password (not the normal Gmail password) as
-`EMAIL_HOST_PASSWORD`. Do not commit `.env` or share the App Password.
+`EMAIL_HOST_PASSWORD`. For Resend, configure `RESEND_API_KEY` and a
+`DEFAULT_FROM_EMAIL` on a verified sender domain. Render Free blocks outbound
+SMTP, so use the Resend API there rather than Gmail SMTP. Do not commit `.env`,
+API keys, or passwords.
 
 | Variable | Local value | Production value |
 | --- | --- | --- |
@@ -63,7 +67,8 @@ Security settings, and use that App Password (not the normal Gmail password) as
 | `EMAIL_HOST`, `EMAIL_PORT` | `smtp.gmail.com`, `587` | SMTP server and port for verification email |
 | `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD` | Gmail address and Google App Password | Gmail SMTP credentials |
 | `EMAIL_USE_TLS` | `True` | `True` for SMTP STARTTLS |
-| `DEFAULT_FROM_EMAIL` | blank | Verified sender address |
+| `RESEND_API_KEY` | blank | Resend API key; preferred for Render Free |
+| `DEFAULT_FROM_EMAIL` | Gmail address or blank | Sender address; verify its domain with Resend |
 | `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` | blank | Optional Google OAuth credentials |
 
 Never commit the `.env` file or a production database URL.
@@ -84,12 +89,14 @@ Open **Time Log** and choose **Export CSV**. The file contains every completed e
 1. Create a free Neon project and copy its pooled PostgreSQL connection string.
 2. Push this repository to GitHub.
 3. In Render, choose **New → Blueprint** and select the repository. The included `render.yaml` creates the StudyTrack web service.
-4. Set `DATABASE_URL`, `SITE_DOMAIN`, `EMAIL_HOST_USER`, `EMAIL_HOST_PASSWORD`,
-   and `DEFAULT_FROM_EMAIL` in Render. Use a Google App Password for
-   `EMAIL_HOST_PASSWORD`; keep it in Render's secret environment settings, never
-   in Git. Render generates `SECRET_KEY` and sets `DEBUG=False` from the
-   blueprint.
+4. Set `DATABASE_URL`, `SITE_DOMAIN`, `RESEND_API_KEY`, and
+   `DEFAULT_FROM_EMAIL` in Render. The sender address must use a verified Resend
+   domain. Keep the API key in Render's secret environment settings, never in
+   Git. Render generates `SECRET_KEY` and sets `DEBUG=False` from the blueprint.
 5. Optionally add Google OAuth credentials and register the deployed callback URI with Google Cloud.
 6. Deploy. Render runs install, `collectstatic`, and migrations automatically, then starts Gunicorn. `/health/` is configured as the health check.
 
-Render's free service can sleep when idle; the first request after sleep can be slow. Data remains safe because production data is stored in Neon PostgreSQL rather than Render's ephemeral filesystem.
+Render's Free service blocks outbound SMTP, so use the Resend API rather than
+Gmail SMTP for verification emails. The service can sleep when idle; the first
+request after sleep can be slow. Data remains safe because production data is
+stored in Neon PostgreSQL rather than Render's ephemeral filesystem.

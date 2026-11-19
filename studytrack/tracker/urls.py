@@ -3,6 +3,8 @@ from . import views
 
 urlpatterns = [
     path("", views.dashboard, name="dashboard"), path("timer/", views.timer, name="timer"),
+    path("timer/pause/", views.pause_timer, name="pause_timer"),
+    path("timer/resume/", views.resume_timer, name="resume_timer"),
     path("timer/stop/", views.stop_timer, name="stop_timer"), path("log/", views.time_log, name="time_log"),
     path("log/export/", views.export_time_log, name="export_time_log"),
     path("log/<int:pk>/edit/", views.edit_entry, name="edit_entry"), path("log/<int:pk>/delete/", views.delete_entry, name="delete_entry"),

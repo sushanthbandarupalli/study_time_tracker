@@ -2,7 +2,7 @@ import calendar
 import csv
 import json
 import re
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, timedelta
 
 from django.contrib.auth.decorators import login_required
 from django.contrib.auth import get_user_model
@@ -25,15 +25,21 @@ _JSON_SCRIPT_ESCAPES = str.maketrans({"<": "\\u003C", ">": "\\u003E", "&": "\\u0
 
 
 def duration(seconds):
-    seconds = int(seconds or 0)
-    hours, seconds = divmod(seconds, 3600)
-    minutes = seconds // 60
-    return f"{hours}h {minutes:02d}m" if hours else f"{minutes}m"
+    total_seconds = max(0, int(seconds or 0))
+    hours, remainder = divmod(total_seconds, 3600)
+    minutes, seconds = divmod(remainder, 60)
+    return f"{hours}h {minutes:02d}m {seconds:02d}s"
 
 
 def display_entry(entry):
     entry.duration_display = duration(entry.duration_seconds)
     return entry
+
+
+def active_elapsed_seconds(entry, now):
+    elapsed_until = entry.paused_at or now
+    active_duration = elapsed_until - entry.start_datetime - entry.paused_duration
+    return max(0, int(active_duration.total_seconds()))
 
 
 def json_for_script(value):
@@ -88,8 +94,8 @@ def dashboard(request):
     metrics = metric_data(entries)
     context = {
         "selected_date": selected, "available_dates": dates, "entries": [display_entry(e) for e in entries], "subjects": subjects, "metrics": metrics,
-        "chart_labels": json_for_script([s.name for s in subjects]), "chart_values": json_for_script([round(class_totals.get(s.id, 0) / 3600, 2) for s in subjects]),
-        "chart_colors": json_for_script([s.color for s in subjects]), "distribution": json_for_script([round(metrics[key] / 3600, 2) for key in ("class", "notes", "free", "other")]),
+        "chart_labels": json_for_script([s.name for s in subjects]), "chart_values": json_for_script([class_totals.get(s.id, 0) for s in subjects]),
+        "chart_colors": json_for_script([s.color for s in subjects]), "distribution": json_for_script([metrics[key] for key in ("class", "notes", "free", "other")]),
     }
     return render(request, "tracker/dashboard.html", context)
 
@@ -113,9 +119,47 @@ def timer(request):
     today_entries = completed_for_dates(request.user, timezone.localdate(), timezone.localdate())
     metrics = metric_data(today_entries)
     latest = [display_entry(e) for e in today_entries[:5]]
-    elapsed_seconds = int((timezone.now() - active.start_datetime).total_seconds()) if active else 0
+    elapsed_seconds = active_elapsed_seconds(active, timezone.now()) if active else 0
     progress = [("Class", duration(metrics["class"]), "bi-headphones text-primary"), ("Notes", duration(metrics["notes"]), "bi-pencil-square notes-text"), ("Practice time", duration(metrics["free"]), "bi-journal-check free-text"), ("Total study", duration(metrics["study"]), "")]
     return render(request, "tracker/timer.html", {"form": form, "active": active, "elapsed_seconds": elapsed_seconds, "metrics": metrics, "progress": progress, "recent": latest})
+
+
+@login_required
+@require_POST
+def pause_timer(request):
+    with transaction.atomic():
+        active = TimeEntry.objects.select_for_update(of=("self",)).filter(
+            user=request.user, end_datetime__isnull=True,
+        ).first()
+        if not active:
+            messages.error(request, "There is no active timer to pause.")
+        elif active.paused_at:
+            messages.error(request, "The timer is already paused.")
+        else:
+            active.paused_at = timezone.now()
+            active.save(update_fields=["paused_at", "updated_at"])
+            messages.success(request, "Timer paused. Time calculation has stopped.")
+    return redirect("timer")
+
+
+@login_required
+@require_POST
+def resume_timer(request):
+    with transaction.atomic():
+        active = TimeEntry.objects.select_for_update(of=("self",)).filter(
+            user=request.user, end_datetime__isnull=True,
+        ).first()
+        if not active:
+            messages.error(request, "There is no active timer to resume.")
+        elif not active.paused_at:
+            messages.error(request, "The timer is already running.")
+        else:
+            now = timezone.now()
+            active.paused_duration += now - active.paused_at
+            active.paused_at = None
+            active.save(update_fields=["paused_at", "paused_duration", "updated_at"])
+            messages.success(request, "Timer resumed. Time calculation has restarted.")
+    return redirect("timer")
 
 
 @login_required
@@ -127,7 +171,11 @@ def stop_timer(request):
         if not active:
             messages.error(request, "There is no active timer to stop.")
         else:
-            active.end_datetime = timezone.now()
+            now = timezone.now()
+            if active.paused_at:
+                active.paused_duration += now - active.paused_at
+                active.paused_at = None
+            active.end_datetime = now
             active.full_clean()
             active.save()
             messages.success(request, f"Session saved — {active.subject or 'No subject'} · {active.get_activity_display()} · {duration(active.duration_seconds)}")
@@ -207,8 +255,8 @@ def weekly(request):
     return render(request, "tracker/weekly.html", {
         "start": start, "end": end, "previous": start - timedelta(days=7), "next": start + timedelta(days=7), "days": days, "rows": rows,
         "metrics": metric_data(entries), "total_class": duration(sum(daily_class)), "labels": json_for_script([d.strftime("%a") for d in days]),
-        "daily_class": json_for_script([round(v / 3600, 2) for v in daily_class]), "daily_notes": json_for_script([round(notes_map.get(d, 0) / 3600, 2) for d in days]),
-        "subject_labels": json_for_script([s.name for s in subjects]), "subject_values": json_for_script([round(r["seconds"] / 3600, 2) for r in rows]), "subject_colors": json_for_script([s.color for s in subjects]),
+        "daily_class": json_for_script(daily_class), "daily_notes": json_for_script([notes_map.get(d, 0) for d in days]),
+        "subject_labels": json_for_script([s.name for s in subjects]), "subject_values": json_for_script([r["seconds"] for r in rows]), "subject_colors": json_for_script([s.color for s in subjects]),
     })
 
 
@@ -239,8 +287,8 @@ def monthly(request):
     next_month = (end + timedelta(days=1)).replace(day=1)
     return render(request, "tracker/monthly.html", {
         "start": start, "end": end, "previous": previous, "next": next_month, "metrics": metric_data(entries), "summary": summary,
-        "labels": json_for_script([str(day.day) for day in days]), "daily": json_for_script([round(daily.get(day, 0) / 3600, 2) for day in days]),
-        "subject_labels": json_for_script([s.name for s in subjects]), "subject_values": json_for_script([round(row["class_seconds"] / 3600, 2) for row in summary]), "subject_colors": json_for_script([s.color for s in subjects]),
+        "labels": json_for_script([str(day.day) for day in days]), "daily": json_for_script([daily.get(day, 0) for day in days]),
+        "subject_labels": json_for_script([s.name for s in subjects]), "subject_values": json_for_script([row["class_seconds"] for row in summary]), "subject_colors": json_for_script([s.color for s in subjects]),
     })
 
 

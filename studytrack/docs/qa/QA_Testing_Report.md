@@ -4,6 +4,8 @@
 
 The post-fix Django suite passed all 42 tests. Django configuration and migration checks passed, and the production deployment check was clean when run with `DEBUG=False` and a temporary strong key. Responsive checks found no horizontal overflow on the authenticated routes and public sign-in/reset pages tested at the specified viewports.
 
+In a later workspace follow-up, all 45 current Django tests passed against an isolated in-memory SQLite test database. Django checks, migration consistency, and patch whitespace checks also passed. This follow-up did not use or modify the Neon QA database.
+
 The audit made targeted fixes for chart-script escaping, legacy-data migration safety, secret/debug defaults, concurrent timer starts, CSV formula injection, and subject input validation. The configured Neon test database was used for test and browser fixtures; production application records were not modified.
 
 ## Scope and environment
@@ -20,6 +22,7 @@ The audit made targeted fixes for chart-script escaping, legacy-data migration s
 |---|---|
 | Baseline regression suite | 38 passed in 631.776 seconds |
 | Post-fix regression suite | 42 passed in 687.991 seconds |
+| Current workspace follow-up suite | 45 passed against isolated in-memory SQLite |
 | Django checks | Passed |
 | Migration consistency (`makemigrations --check`) | Passed |
 | Python compilation | Passed |

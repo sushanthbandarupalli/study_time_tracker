@@ -6,12 +6,13 @@
 |---|---|---:|
 | Baseline, before the QA fixes | 38 passed | 631.776 seconds |
 | Post-fix full suite | 42 passed | 687.991 seconds |
+| Current workspace follow-up | 45 passed on isolated in-memory SQLite | 53.711 seconds |
 
 The regression suite ran with `manage.py test --keepdb` against the isolated Neon test database. No tests failed.
 
 ## New regression coverage
 
-Four tests were added for risks found during the audit:
+Four tests were added for risks found during the original audit:
 
 1. `test_settings_rejects_invalid_subject_color_and_overlong_name` verifies input constraints.
 2. `test_csv_export_neutralizes_spreadsheet_formulas` verifies spreadsheet-safe export behavior.
@@ -19,6 +20,8 @@ Four tests were added for risks found during the audit:
 4. `test_legacy_data_migration_stops_without_deleting_existing_rows` verifies a migration abort leaves legacy rows intact.
 
 The suite also covers timer start/stop and ownership, reports, subject operations, authentication and authorization, password reset and change, email delivery failures, exports, and the health endpoint. See [`Test_Case_Documentation.md`](./Test_Case_Documentation.md) for the grouped case inventory.
+
+The later workspace follow-up added coverage for pause/resume duration accounting, stopping while paused, and hour/minute/second formatting. The current suite has 45 tests.
 
 ## Additional checks
 

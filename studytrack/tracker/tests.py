@@ -14,6 +14,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from .models import Subject, TimeEntry
+from .views import duration
 
 
 class StudyTrackTests(TestCase):
@@ -29,6 +30,19 @@ class StudyTrackTests(TestCase):
 
     def at(self, day, hour=9, minute=0):
         return timezone.make_aware(datetime.combine(day, time(hour, minute)))
+
+    def test_duration_display_always_includes_hours_minutes_and_seconds(self):
+        cases = {
+            0: "0h 00m 00s",
+            59: "0h 00m 59s",
+            60: "0h 01m 00s",
+            3599: "0h 59m 59s",
+            3600: "1h 00m 00s",
+            3661: "1h 01m 01s",
+        }
+        for seconds, expected in cases.items():
+            with self.subTest(seconds=seconds):
+                self.assertEqual(duration(seconds), expected)
 
     def entry(self, day, seconds, activity="class", subject=None):
         start = self.at(day)
@@ -60,6 +74,46 @@ class StudyTrackTests(TestCase):
         entry = TimeEntry.objects.get()
         self.assertEqual(entry.duration_seconds, 5700)
         self.assertEqual(entry.end_datetime, end)
+
+    def test_pause_resume_excludes_paused_time_from_elapsed_and_saved_duration(self):
+        start = self.at(date(2026, 9, 8))
+        paused_at = start + timedelta(hours=1)
+        resumed_at = start + timedelta(hours=1, minutes=30)
+        with patch("tracker.views.timezone.now", return_value=start):
+            self.client.post(reverse("timer"), {"subject": self.subject.pk, "activity": "class"})
+        with patch("tracker.views.timezone.now", return_value=paused_at):
+            self.client.post(reverse("pause_timer"))
+        with patch("tracker.views.timezone.now", return_value=start + timedelta(hours=1, minutes=15)):
+            response = self.client.get(reverse("timer"))
+        self.assertEqual(response.context["elapsed_seconds"], 3600)
+        self.assertContains(response, "Resume timer")
+        self.assertContains(response, 'data-paused="true"')
+        with patch("tracker.views.timezone.now", return_value=resumed_at):
+            self.client.post(reverse("resume_timer"))
+        with patch("tracker.views.timezone.now", return_value=start + timedelta(hours=2)):
+            response = self.client.get(reverse("timer"))
+        self.assertEqual(response.context["elapsed_seconds"], 5400)
+        with patch("tracker.views.timezone.now", return_value=start + timedelta(hours=2, minutes=30)):
+            self.client.post(reverse("stop_timer"))
+        entry = TimeEntry.objects.get()
+        self.assertEqual(entry.paused_duration, timedelta(minutes=30))
+        self.assertEqual(entry.duration_seconds, 7200)
+        self.assertIsNone(entry.paused_at)
+
+    def test_stopping_while_paused_excludes_final_pause_interval(self):
+        start = self.at(date(2026, 9, 8))
+        paused_at = start + timedelta(minutes=10)
+        stopped_at = start + timedelta(minutes=20)
+        with patch("tracker.views.timezone.now", return_value=start):
+            self.client.post(reverse("timer"), {"subject": self.subject.pk, "activity": "class"})
+        with patch("tracker.views.timezone.now", return_value=paused_at):
+            self.client.post(reverse("pause_timer"))
+        with patch("tracker.views.timezone.now", return_value=stopped_at):
+            self.client.post(reverse("stop_timer"))
+        entry = TimeEntry.objects.get()
+        self.assertEqual(entry.paused_duration, timedelta(minutes=10))
+        self.assertEqual(entry.duration_seconds, 600)
+        self.assertIsNone(entry.paused_at)
 
     def test_only_one_active_timer_is_allowed(self):
         self.client.post(reverse("timer"), {"subject": self.subject.pk, "activity": "class"})

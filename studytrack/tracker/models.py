@@ -1,3 +1,5 @@
+from datetime import timedelta
+
 from django.core.exceptions import ValidationError
 from django.conf import settings
 from django.db import models
@@ -32,6 +34,8 @@ class TimeEntry(models.Model):
     activity = models.CharField(max_length=12, choices=Activity.choices)
     start_datetime = models.DateTimeField()
     end_datetime = models.DateTimeField(null=True, blank=True)
+    paused_at = models.DateTimeField(null=True, blank=True)
+    paused_duration = models.DurationField(default=timedelta)
     duration_seconds = models.PositiveIntegerField(default=0)
     notes = models.TextField(blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
@@ -58,7 +62,8 @@ class TimeEntry(models.Model):
         ).exists():
             raise ValidationError({"subject": "Choose one of your own subjects."})
         if self.end_datetime:
-            self.duration_seconds = max(0, int((self.end_datetime - self.start_datetime).total_seconds()))
+            elapsed = self.end_datetime - self.start_datetime - self.paused_duration
+            self.duration_seconds = max(0, int(elapsed.total_seconds()))
         else:
             self.duration_seconds = 0
         super().save(*args, **kwargs)
