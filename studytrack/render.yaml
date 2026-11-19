@@ -16,6 +16,8 @@ projects:
                 generateValue: true
               - key: DEBUG
                 value: "False"
+              - key: PYTHON_VERSION
+                value: "3.13.4"
               - key: DATABASE_URL
                 sync: false
               - key: SITE_DOMAIN
